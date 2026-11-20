@@ -27,6 +27,7 @@ def league_rank(league_id):
 
 posted_goals = set()
 posted_program_date = None
+posted_result_date = None
 
 def post_fb(message):
     for pid, token in zip(PAGE_IDS, PAGE_TOKENS):
@@ -112,12 +113,48 @@ def check_program():
     except Exception as e:
         print(f"Erreur programme: {e}", flush=True)
 
+def check_results():
+    global posted_result_date
+    try:
+        now_utc = datetime.now(timezone.utc)
+        today = date.today().isoformat()
+        if posted_result_date == today:
+            return
+        if now_utc.hour != 22:
+            return
+        print("Check résultats du jour...", flush=True)
+        r = api_get("https://v3.football.api-sports.io/fixtures", {"date": today, "status": "FT"})
+        if r.status_code != 200:
+            return
+        games = r.json().get("response", [])
+        games.sort(key=lambda g: league_rank(g["league"]["id"]))
+        if not games:
+            posted_result_date = today
+            return
+        games = [g for g in games if g["goals"]["home"] is not None]
+        top = games[:30]
+        lines = []
+        for g in top:
+            lines.append(f"✅ {g['teams']['home']['name']} {g['goals']['home']} - {g['goals']['away']} {g['teams']['away']['name']} - {g['league']['name']} ({g['league']['country']})")
+        post_fb(f"📊 RÉSULTATS DU JOUR - {today} - TOP MATCHS 🌍\n\n" + "\n".join(lines) + "\n\nQuel résultat vous a surpris ? 👇\n\n#ScoreGoalFoot #Resultats")
+        others = games[30:120]
+        if others:
+            lines2 = []
+            for g in others:
+                lines2.append(f"✅ {g['teams']['home']['name']} {g['goals']['home']} - {g['goals']['away']} {g['teams']['away']['name']} - {g['league']['name']}")
+            post_fb(f"📊 RÉSULTATS DU JOUR - {today} - SUITE 🌍\n\n" + "\n".join(lines2) + "\n\n#ScoreGoalFoot #Resultats")
+        posted_result_date = today
+        print(f"Résultats postés - {len(games)} matchs", flush=True)
+    except Exception as e:
+        print(f"Erreur résultats: {e}", flush=True)
+
 def worker():
-    print("Worker démarré - MONDE ENTIER", flush=True)
+    print("Worker démarré - MONDE ENTIER + RESULTATS", flush=True)
     while True:
         try:
             check_live()
             check_program()
+            check_results()
         except Exception as e:
             print(f"Erreur worker: {e}", flush=True)
         time.sleep(60)
@@ -170,6 +207,22 @@ def debug_live():
         if not games:
             txt += "Aucun match live selon API-Football en ce moment."
         return txt
+    except Exception as e:
+        return f"Erreur: {e}"
+
+@app.route("/test-resultats")
+def test_resultats():
+    try:
+        today = date.today().isoformat()
+        r = api_get("https://v3.football.api-sports.io/fixtures", {"date": today, "status": "FT"})
+        games = r.json().get("response", [])
+        games.sort(key=lambda g: league_rank(g["league"]["id"]))
+        games = [g for g in games if g["goals"]["home"] is not None][:10]
+        if not games:
+            return "Aucun match terminé aujourd'hui pour l'instant. Réessaie ce soir."
+        lines = [f"✅ {g['teams']['home']['name']} {g['goals']['home']} - {g['goals']['away']} {g['teams']['away']['name']} - {g['league']['name']}" for g in games]
+        post_fb(f"📊 RÉSULTATS DU JOUR - TEST - {today}\n\n" + "\n".join(lines) + "\n\n#ScoreGoalFoot #Resultats")
+        return "Résultats test postés ! Regarde ta Page."
     except Exception as e:
         return f"Erreur: {e}"
 
